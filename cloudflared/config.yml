@@ -1,0 +1,11 @@
+tunnel: portfolio-phone
+credentials-file: /root/.cloudflared/credentials.json
+
+ingress:
+  - hostname: ziad-rafik.xyz
+    service: http://localhost:8080
+  - hostname: www.ziad-rafik.xyz
+    service: http://localhost:8080
+  - hostname: hermes.ziad-rafik.xyz
+    service: http://localhost:3000
+  - service: http_status:404

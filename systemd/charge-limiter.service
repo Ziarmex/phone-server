@@ -1,0 +1,6 @@
+[Unit]
+Description=Battery charge limiter at 50%
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/charge-limiter.sh

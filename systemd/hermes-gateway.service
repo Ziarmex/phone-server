@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes WhatsApp Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=droidian
+WorkingDirectory=/home/droidian/hermes-agent
+ExecStart=/home/droidian/hermes-agent/venv/bin/hermes gateway run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

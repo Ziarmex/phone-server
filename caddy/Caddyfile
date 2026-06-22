@@ -1,0 +1,9 @@
+:8080 {
+    root * /var/www/portfolio
+    file_server
+    encode gzip
+    header Cache-Control "public, max-age=3600"
+    log {
+        output file /var/log/caddy/portfolio.log
+    }
+}

@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+import sqlite3, os, sys, json
+from datetime import datetime, date
+
+DB = os.path.expanduser("~/.hermes/finance.db")
+CATEGORIES = ["food","housing","transport","education","health","entertainment","shopping","travel","phone","misc"]
+
+def conn():
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    c = sqlite3.connect(DB)
+    c.row_factory = sqlite3.Row
+    c.execute("""CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        category TEXT NOT NULL,
+        amount REAL NOT NULL,
+        note TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS budgets (
+        category TEXT PRIMARY KEY,
+        monthly REAL NOT NULL
+    )""")
+    c.commit()
+    return c
+
+def current_month():
+    return date.today().strftime("%Y-%m")
+
+def spend(category, amount, note=""):
+    c = conn()
+    c.execute("INSERT INTO transactions (date, category, amount, note) VALUES (?, ?, ?, ?)",
+              (date.today().isoformat(), category, amount, note))
+    c.commit()
+    spent = c.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE category=? AND date LIKE ?",
+                      (category, current_month() + "%")).fetchone()[0]
+    budget = c.execute("SELECT monthly FROM budgets WHERE category=?", (category,)).fetchone()
+    remaining = (budget[0] - spent) if budget else None
+    c.close()
+    msg = f"Logged: {category} {amount:.0f}"
+    if remaining is not None:
+        msg += f" — {remaining:.0f} remaining this month"
+    return msg
+
+def budget(category, amount):
+    c = conn()
+    c.execute("INSERT OR REPLACE INTO budgets (category, monthly) VALUES (?, ?)", (category, amount))
+    c.commit()
+    c.close()
+    return f"Budget set: {category} = {amount:.0f}/month"
+
+def report(month=None):
+    if not month: month = current_month()
+    c = conn()
+    rows = c.execute("""SELECT t.category, COALESCE(SUM(t.amount),0) as spent, b.monthly as budget
+        FROM transactions t LEFT JOIN budgets b ON t.category = b.category
+        WHERE t.date LIKE ? GROUP BY t.category ORDER BY spent DESC""", (month + "%",)).fetchall()
+    total = sum(r["spent"] for r in rows)
+    lines = [f"Report for {month}", "─" * 30]
+    for r in rows:
+        bgt = r["budget"] or 0
+        pct = (r["spent"] / bgt * 100) if bgt > 0 else 0
+        bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10)) if bgt > 0 else ""
+        lines.append(f"{r['category']:15s} {r['spent']:>8.0f}  {bgt:>8.0f}  {pct:5.0f}% {bar}")
+    lines.append("─" * 30)
+    lines.append(f"{'TOTAL':15s} {total:>8.0f}")
+    c.close()
+    return "\n".join(lines)
+
+def advise(amount, category=None):
+    c = conn()
+    total_budget = c.execute("SELECT COALESCE(SUM(monthly),0) FROM budgets").fetchone()[0]
+    total_spent = c.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE date LIKE ?",
+                            (current_month() + "%",)).fetchone()[0]
+    remaining_total = total_budget - total_spent
+    msg = f"Cost: {amount:.0f}\n"
+    msg += f"Spent this month: {total_spent:.0f} / {total_budget:.0f}\n"
+    msg += f"Remaining: {remaining_total:.0f}\n\n"
+    if category:
+        cat_budget = c.execute("SELECT monthly FROM budgets WHERE category=?", (category,)).fetchone()
+        if cat_budget:
+            cat_spent = c.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE category=? AND date LIKE ?",
+                                  (category, current_month() + "%")).fetchone()[0]
+            cat_remaining = cat_budget[0] - cat_spent
+            msg += f"In {category}: {cat_spent:.0f} / {cat_budget[0]:.0f} used\n"
+            msg += f"Category remaining: {cat_remaining:.0f}\n\n"
+    if remaining_total >= amount:
+        msg += "✅ You can afford this — still within total budget."
+    elif total_budget == 0:
+        msg += "⚠️ No budgets set up yet. Use 'budget category amount' to set them."
+    else:
+        deficit = amount - remaining_total
+        msg += f"⚠️ You're short by {deficit:.0f}. Consider waiting or cutting elsewhere."
+    c.close()
+    return msg
+
+def list_budgets():
+    c = conn()
+    rows = c.execute("SELECT * FROM budgets ORDER BY category").fetchall()
+    c.close()
+    if not rows:
+        return "No budgets set. Use 'budget <category> <amount>'."
+    lines = [f"{'Category':15s} {'Monthly':>8s}"]
+    for r in rows:
+        lines.append(f"{r['category']:15s} {r['monthly']:>8.0f}")
+    return "\n".join(lines)
+
+def list_categories():
+    return "Categories: " + ", ".join(CATEGORIES)
+
+def history(category=None, limit=10):
+    c = conn()
+    if category:
+        rows = c.execute("SELECT * FROM transactions WHERE category=? ORDER BY date DESC LIMIT ?",
+                         (category, limit)).fetchall()
+    else:
+        rows = c.execute("SELECT * FROM transactions ORDER BY date DESC LIMIT ?", (limit,)).fetchall()
+    c.close()
+    if not rows:
+        return "No transactions yet."
+    lines = [f"{'Date':12s} {'Category':15s} {'Amount':>8s}  Note"]
+    for r in rows:
+        lines.append(f"{r['date']:12s} {r['category']:15s} {r['amount']:>8.0f}  {r['note'] or ''}")
+    return "\n".join(lines)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Commands: spend <category> <amount> [note]")
+        print("          budget <category> <amount>")
+        print("          budgets")
+        print("          categories")
+        print("          report [month]")
+        print("          advise <amount> [category]")
+        print("          history [category]")
+        sys.exit(1)
+    cmd = sys.argv[1]
+    try:
+        if cmd == "spend" and len(sys.argv) >= 4:
+            print(spend(sys.argv[2], float(sys.argv[3]), " ".join(sys.argv[4:])))
+        elif cmd == "budget" and len(sys.argv) >= 4:
+            print(budget(sys.argv[2], float(sys.argv[3])))
+        elif cmd == "report":
+            print(report(sys.argv[2] if len(sys.argv) > 2 else None))
+        elif cmd == "advise" and len(sys.argv) >= 3:
+            print(advise(float(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else None))
+        elif cmd == "budgets":
+            print(list_budgets())
+        elif cmd == "categories":
+            print(list_categories())
+        elif cmd == "history":
+            print(history(sys.argv[2] if len(sys.argv) > 2 else None))
+        else:
+            print("Invalid command or arguments.")
+    except Exception as e:
+        print(f"Error: {e}")
