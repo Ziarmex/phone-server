@@ -33,7 +33,30 @@ This document covers the full architecture, the catastrophic crash saga, and the
 
 ---
 
-## The Crash Saga
+## The Full Story
+
+### Phase 0 — Droidian Server Bring-Up
+
+The phone arrived as a stock Droidian installation — a Debian-based mobile Linux running on top of an Android kernel via the Halium compatibility layer. The first task was stripping it down from a mobile OS to a lean headless server.
+
+**GUI removal:** Phosh (the GNOME-based mobile UI) was consuming ~500 MB RAM and all GPU cycles. `systemctl mask phosh.service` removed it, along with the entire display stack. The screen was dimmed to minimum brightness via a boot-time systemd oneshot service writing `0` to `/sys/class/backlight/*/brightness`.
+
+**Bloat removal:** Cups (printing), avahi-daemon (mDNS), nfcd (NFC), strongswan (VPN), accounts-daemon, sensorfwd, and iio-sensor-proxy were all disabled. sleep/suspend/hibernate targets were masked to keep the phone awake 24/7.
+
+**Repository fix:** The halhadus third-party repository ships a signed `InRelease` file but the signing key (`69ED0EC2AEE900E4188B22A3D3AD3C45D451E0DC`) is permanently unavailable — the developer's keyserver returns 404. Droidian uses `sqv` (Sequoia-PGP) instead of `gpgv`, which cannot be bypassed via standard `apt` options. A wrapper was installed:
+
+```bash
+mv /usr/bin/sqv /usr/bin/sqv.real
+printf '#!/bin/sh\nsqv.real "$@" 2>/dev/null || exit 0\n' > /usr/bin/sqv
+```
+
+The wrapper runs the real `sqv`, suppresses its error output, and exits 0 on failure. `apt` accepts the repository.
+
+**Network hardening:** WiFi power saving was disabled, a static IP (`192.168.1.100/24`) was assigned, and USB RNDIS gadget networking was configured at `192.168.42.1/24` as an out-of-band failover path. Dual-network management means the phone is reachable even when the WiFi driver crashes.
+
+**Charge limiter:** A systemd timer running every 2 minutes writes to `/sys/class/power_supply/battery/input_suspend` — suspending charging at 50%, resuming at 45%. This keeps the battery in its optimal range for indefinite 24/7 plug-in operation.
+
+### Phase 1 — The Crash
 
 ### Symptoms
 
